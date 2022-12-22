@@ -66,5 +66,8 @@ op68k < ops68k.ops > ops68k.h
 
 This file contains the detailed descriptions of the instructions and how they are built into machine code.
 
+## Warning
+
+This is neither finished nor tested code.  You have been warned.
 
 Jeff.
