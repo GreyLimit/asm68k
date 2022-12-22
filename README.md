@@ -6,6 +6,18 @@ An assembler for a range of Motorola 68000 processors, though at present only th
 
 The surrent startus is eary, very early, testing.
 
+## Facilities
+
+At the moment, while ostensibly supporting the concept of sections (code, data and BSS), and being prepared to assemble source code without any specific base address being provided, it falls short of generating relocatable results.
+
+If no fixed address are provided (via "ORG") then all three sections are floating, and only once code generation is started are fixed addresses applied to each section.  The sections will be ordered traditionally (code, data then BSS), with the output generated starting at address 0.
+
+Assigning an address to the text segment before assembling any code will enable the start address of the text section to be moved and while the remaining sections remain "un-fixed" they will always for the code section in their respective locations.
+
+The start address of the code can be set using the "START" directive.
+
+Relocatable intermediate object files are a future objective, just need to identify a suitable (and simple) format then embed that into the output processing.
+
 ## Usage
 
 ```
