@@ -6,6 +6,32 @@ An assembler for a range of Motorola 68000 processors, though at present only th
 
 The surrent startus is eary, very early, testing.
 
+## Usage
+
+```
+$ ./a.out --help
+Usage: ./a.out [ {options} ] {filename}
+Options:-
+        --68000          Target mc68000 CPU
+        --68008          Target mc68008 CPU
+        --68010          Target mc68010 CPU
+        --68020          Target mc68020 CPU
+        --68030          Target mc68030 CPU
+        --68881          Target mc68881 FPU
+        --68882          Target mc68882 FPU
+        --hexadecimal    Output text hexadecimal values
+        --intel          Output Intel Hex format data
+        --motorola       Output Motorola S records
+        --listing        Display an assembly listing
+        --no-output      Do not output any code
+        --stdout         Send output to console
+        --symbols        Output Symbol table
+        --sections       Output consolidated sections
+        --dump-opcodes   Display op-codes table
+        --help           Display this help information
+        --debug          Enable additonal debugging output
+```
+
 ## Compiling
 
 There are two programs here; the assembler and a tool required to facilitate compiling the assembler:
