@@ -101,7 +101,7 @@ typedef long int	number;
 #define NEW(t)		((t *)malloc(sizeof(t)))
 #define STACK(t)	((t *)alloca(sizeof(t)))
 #define STACK_N(t,n)	((t *)alloca(sizeof( t )*(n)))
-#define SPACE(n)	((byte *)alloca((n)))
+#define SPACE(n)	((char *)alloca((n)))
 #define FUNC(a)		(*(a))
 
 //
@@ -222,7 +222,7 @@ static int option_flags = OPTIONS_NONE;
 
 //
 //	The ABORT macro is always fully specified.  What is
-//	the point of crashing without giving some idication
+//	the point of crashing without giving some indication
 //	of why?
 //
 #define ABORT(m)	do{ fprintf( stderr, "Program Abort \"%s\" (%s:%d:%s).\n", (m), __FILE__, __LINE__, __FUNCTION__ ); abort(); }while(0)
@@ -381,17 +381,23 @@ typedef enum {
 //	expects it) then Word is the assumed size.
 //
 typedef enum {
-	NO_SIZE	= 00,				// No size specification
-	SIZE_B	= 01,				// Byte 8 bit values
-	SIZE_W	= 02,				// Word 16 bit values
-	SIZE_L	= 04				// Long 32 bit values
+	NO_SIZE		= 00,			// No size specification
+	//
+	//	Individual size specifications..
+	//
+	SIZE_B		= 01,			// Byte 8 bit values
+	SIZE_W		= 02,			// Word 16 bit values
+	SIZE_L		= 04,			// Long 32 bit values
+	//
+	//	Joint size specifications..
+	//
+	SIZE_WL		= SIZE_W|SIZE_L,
+	SIZE_BWL	= SIZE_B|SIZE_W|SIZE_L
 } sizing;
 
 //
 //	Define common sets of sizes required in the instruction set
 //
-#define SIZE_WL		(SIZE_W|SIZE_L)
-#define SIZE_BWL	(SIZE_B|SIZE_W|SIZE_L)
 
 //
 //	Return the size (in bytes) of the size provided.  If multiple
@@ -407,7 +413,7 @@ static int get_size( sizing z ) {
 //
 //	provide basic scoping information on a sizing value.
 //
-static int scope_size( sizing z ) {
+static scope scope_size( sizing z ) {
 	scope		s;
 
 	s = NO_SCOPE;
@@ -804,7 +810,7 @@ static output_api _null_output_api = {
 //	Ensure MAX_SOURCE_OUTPUT_BUFFER <= MAX_OUTPUT_BUFFER
 //
 #define MAX_SOURCE_CODE_BUFFER 80
-#define MAX_SOURCE_OUTPUT_BUFFER 4
+#define MAX_SOURCE_OUTPUT_BUFFER 6
 static int _listing_this_line = 0;
 static char _listing_source_code[ MAX_SOURCE_CODE_BUFFER+1 ];  // +1 for EOS
 
@@ -826,14 +832,14 @@ static void _listing_flush_output( void ) {
 	//
 	if(( buffered_output == 0 )&&( _listing_this_line == 0 )) return;
 	if( buffered_output ) {
-		fprintf( output_file, "%04X ", (int)buffered_address );
-		for( i = 0; i < buffered_output; fprintf( output_file, "%02X", (int)output_buffer[ i++ ]));
+		fprintf( output_file, DWORD_FORMAT" ", buffered_address );
+		for( i = 0; i < buffered_output; fprintf( output_file, BYTE_FORMAT, output_buffer[ i++ ]));
 		while( i++ < MAX_SOURCE_OUTPUT_BUFFER ) fprintf( output_file, "  " );
 		buffered_address += buffered_output;
 		buffered_output = 0;
 	}
 	else {
-		fprintf( output_file, "     " );
+		fprintf( output_file, "         " );
 		for( i = 0; i < MAX_SOURCE_OUTPUT_BUFFER; i++ ) fprintf( output_file, "  " );
 	}
 	if( _listing_this_line ) {
@@ -1035,34 +1041,133 @@ static output_api _motorola_output_api = {
 //	The Intel Hex record output system.
 //	-----------------------------------
 //
+static dword _intel_linear_adrs = FIRST_ADDRESS;	// bottom word should always be 0x0000.
+static dword _intel_start_address = FIRST_ADDRESS;	// Execution start address.
+
+//
+//	Output a DATA record.
+//
+static void _intel_00_record( word adrs, byte *buffer, int len ) {
+	byte	s;
+
+	PRINT(( "Output %d byte(s) at address "WORD_FORMAT".\n", len, adrs ));
+	//
+	//	len	HAdrs		LAdrs		Type
+	s =	len +	H( adrs ) +	L( adrs ) +	0x00;
+	//
+	fprintf( output_file, ":"BYTE_FORMAT""WORD_FORMAT"00", len, adrs );
+	for( int i = 0; i < len; i++ ) {
+		s += buffer[ i ];
+		fprintf( output_file, BYTE_FORMAT, buffer[ i ]);
+	}
+	fprintf( output_file, BYTE_FORMAT"\n", -s & 0xff );
+}
+//
+//	Set a the LINEAR address top word.
+//
+static void _intel_04_record( word adrs ) {
+	byte	s;
+
+	PRINT(( "Set high word of linear address to "WORD_FORMAT".\n", adrs ));
+	//	len	HAdrs	LAdrs	Type	HLinear		LLinear
+	s =	2 +	0x00 +	0x00 +	0x04 +	H( adrs ) +	L( adrs );
+	//
+	fprintf( output_file, ":02000004"WORD_FORMAT""BYTE_FORMAT"\n", adrs, -s & 0xff );
+}
+//
+//	Set the START execute from address.
+//
+static void _intel_05_record( dword adrs ) {
+	byte	s;
+	
+	//	len	HAdrs	LAdrs	Type	Start_Address____
+	s =	4 +	0x00 +	0x00 +	0x05 +	DW0( adrs ) +	DW1( adrs ) +	DW2( adrs ) +	DW3( adrs );
+	//
+	fprintf( output_file, ":04000005"DWORD_FORMAT""BYTE_FORMAT"\n", adrs, -s & 0xff );
+}
+
 static void _intel_init_output( char *source ) {
 	buffered_output = 0;
 	buffered_address = 0;
+	_intel_linear_adrs = FIRST_ADDRESS;
+	_intel_start_address = FIRST_ADDRESS;
+	_intel_04_record( HW( _intel_linear_adrs ));
 }
 static void _intel_next_line( int line, char *code ) {
 }
-static void _intel_flush_output( void ) {
+static bool _intel_flush_output( void ) {
+	//
+	//	Returns TRUE if there is still some data
+	//	left in the buffer to be flushed.
+	//
 	if( buffered_output ) {
-		byte	s;
+		dword	a;
 
-		s = buffered_output + H( buffered_address ) + L( buffered_address );
-		fprintf( output_file, ":%02X%04X00", buffered_output, buffered_address );
-		for( int i = 0; i < buffered_output; i++ ) {
-			s += output_buffer[ i ];
-			fprintf( output_file, "%02X", output_buffer[ i ]);
+		ASSERT( buffered_output <= MAX_OUTPUT_BUFFER );
+		ASSERT( LW( _intel_linear_adrs ) == 0 );
+		ASSERT( buffered_address >= _intel_linear_adrs );
+		ASSERT( buffered_address <= ( _intel_linear_adrs | 0xFFFF ));
+
+		//
+		//	We need to be  mindful of "wrapping" the address from
+		//	0xffff back to 0x0000.  Therefore we need to establish
+		//	how many bytes there are between our current buffered_address
+		//	and the address where the low word wraps to 0.  Also
+		//	need to be mindful of the high word wrapping too.
+		//
+		a = (( _intel_linear_adrs | 0xFFFF ) - buffered_address ) + 1;
+		
+		if( buffered_output > a ) {
+			//
+			//	Need to output some of this line, then output
+			//	a new linear address record.
+			//
+			_intel_00_record( LW( buffered_address ), output_buffer, a );
+			buffered_address += a;
+			buffered_output -= a;
+			memcpy( output_buffer, output_buffer+a, buffered_output );
+
+			ASSERT( buffered_address >= ( _intel_linear_adrs + 0x00010000 ));
+			
+			_intel_linear_adrs = buffered_address & 0xFFFF0000;
+			_intel_04_record( HW( _intel_linear_adrs ));
+			//
+			//	Admit buffer not actually empty.
+			//
+			return( TRUE );
 		}
-		fprintf( output_file, "%02X\n", -s & 0xff );
+		//
+		//	All good, address changes kept inside the low word.
+		//
+		_intel_00_record( LW( buffered_address ), output_buffer, buffered_output );
 		buffered_address += buffered_output;
 		buffered_output = 0;
+		//
+		//	Edge case where the output record exactly meets the
+		//	boundary to a new linear address range.
+		//
+		if( HW( buffered_address ) != HW( _intel_linear_adrs )) {
+			_intel_linear_adrs = buffered_address & 0xFFFF0000;
+			_intel_04_record( HW( _intel_linear_adrs ));
+		}
 	}
+	//
+	//	Done!
+	//
+	return( FALSE );
 }
 static void _intel_set_address( dword adrs ) {
 	if(( buffered_address + buffered_output ) != adrs ) {
-		if( buffered_output ) _intel_flush_output();
+		while( _intel_flush_output());
 		buffered_address = adrs;
+		if( HW( buffered_address ) != HW( _intel_linear_adrs )) {
+			_intel_linear_adrs = buffered_address & 0xFFFF0000;
+			_intel_04_record( HW( _intel_linear_adrs ));
+		}
 	}
 }
 static void _intel_set_start( dword adrs ) {
+	_intel_start_address = adrs;
 }
 static void _intel_add_byte( byte data ) {
 	output_buffer[ buffered_output++ ] = data;
@@ -1070,7 +1175,8 @@ static void _intel_add_byte( byte data ) {
 }
 
 static void _intel_end_output( void ) {
-	_intel_flush_output();
+	while( _intel_flush_output());
+	_intel_05_record( _intel_start_address );
 	fprintf( output_file, ":00000001FF\n" );
 }
 
@@ -1384,7 +1490,7 @@ static void dump_identifiers_r( FILE *to, identifier *ptr ) {
 				fprintf( to, "= Import" );
 			}
 			else {
-				fprintf( to, "= %6ld($%04lX)", ptr->value, ptr->value );
+				fprintf( to, "= %6ld($"DWORD_FORMAT")", (long int)ptr->value, ptr->value );
 				s = scope_types;
 				while( s->contains ) {
 					if( ptr->where & s->contains ) {
@@ -1660,7 +1766,7 @@ static char *set_section_address( dword adrs ) {
 	//	finish address back to the last used address
 	//	(if the section is not empty).
 	//
-	if( !p->empty ) current_section->finish = current_section->adrs - 1;
+	if( !current_section->empty ) current_section->finish = current_section->adrs - 1;
 	
 	//
 	//	Lots to do here.  We need to identify the sections which preceed
@@ -3257,7 +3363,7 @@ static char *fill_out_index( argument *ptr, token *tokens ) {
 			 | ( d & 0xFF );
 	ptr->contains =	NO_SCOPE;
 
-	PRINT(( "disp = %ld\n", d ));
+	PRINT(( "disp = "DWORD_FORMAT"\n", d ));
 	PRINT(( "index = %c%d.%c\n", (( reg->id  == TOK_DREG )? 'D': 'A' ), reg->var.regno, (( size->id == TOK_WORD )? 'W': 'L' )));
 
 	return( NULL );
@@ -3326,14 +3432,14 @@ static char *absolute( sizing sizes, bool source, argument *ptr, token *tokens )
 	
 	if( contains & SCOPE_S16 ) {
 
-		PRINT(( "Short Absolute %ld\n", adrs ));
+		PRINT(( "Short Absolute "DWORD_FORMAT"\n", adrs ));
 		
 		ptr->match = EA_ABS_SHORT_IND | ABS_ADDRESS;
 		ptr->adjust = 070;		// (octal)
 		ptr->extends = 1;
 	}
 	else {
-		PRINT(( "Long Absolute %ld\n", adrs ));
+		PRINT(( "Long Absolute "DWORD_FORMAT"\n", adrs ));
 		
 		ptr->match = EA_ABS_LONG_IND | ABS_ADDRESS;
 		ptr->adjust = 071;		// (octal)
@@ -3828,6 +3934,8 @@ static char *dir_set_address( input *inp ) {
 	a = v->var.val.value;
 	
 	if(( e = set_section_address( a )) != NULL ) return( e );
+
+	set_address( a );
 	
 	if( inp->label != NULL ) return( set_ident_value( inp->label->text, inp->label->len, section_scope(), section_address()));
 	
@@ -3844,7 +3952,6 @@ static char *dir_set_address( input *inp ) {
 static char *dir_set_start( input *inp ) {
 	token	*v;
 	dword	a;
-	char	*e;
 
 	if( inp->size != NO_SIZE ) return( "Start address (START) does not support sizes" );
 	if( inp->var.assembler_op.args != 1 ) return( "Incorrect argument count for start address (START)" );
@@ -4102,7 +4209,7 @@ static char *process_instruction( input *inp ) {
 	char		*err;
 	opcode		*look;
 	arg_type	a1, a2;
-	int		i, j;
+	int		j;
 
 	ASSERT( inp != NULL );
 	ASSERT( inp->instruction );
@@ -5047,8 +5154,7 @@ static int parse_arguments( int argc, char **argv ) {
 //
 int main( int argc, char *argv[]) {
 	FILE	*source;
-	int	file, last, count;
-	char	*s;
+	int	file;
 	int	err, a;
 
 	//
@@ -5056,7 +5162,7 @@ int main( int argc, char *argv[]) {
 	//
 	if(( file = parse_arguments( argc, argv )) <= 0 ) return( -file );
 	if(( source = fopen( argv[ file ], "r" )) == NULL ) {
-		fprintf( stderr, "Unable to open file '%s', error '%m'.\n", argv[ 1 ]);
+		fprintf( stderr, "Unable to open file '%s', error '%m'.\n", argv[ file ]);
 		return( 2 );
 	}
 	
@@ -5095,7 +5201,7 @@ int main( int argc, char *argv[]) {
 		//
 		//	No.
 		//
-		fprintf( stderr, "Pass 2: Verification failed.\n", err );
+		fprintf( stderr, "Pass 2: Verification failed, %d errors.\n", err );
 		if( option_flags & DISPLAY_SYMBOLS ) dump_identifiers( stdout );
 		return( 2 );
 	}
