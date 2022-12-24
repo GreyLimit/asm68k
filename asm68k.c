@@ -352,26 +352,36 @@ typedef enum {
 //	has meaning.
 //
 typedef enum {
-	NO_SCOPE	= 00000,	// When a value has been used but
+	NO_SCOPE	= 000000,	// When a value has been used but
 					// nothing about what it might reflect
 					// can be inferred
 					
-	SCOPE_S8	= 00001,	// An 8 bit signed value
-	SCOPE_S16	= 00002,	// A 16 bit signed value
-	SCOPE_S32	= 00004,	// A full 32 bit signed value
+	SCOPE_S8	= 000001,	// An 8 bit signed value
+	SCOPE_S16	= 000002,	// A 16 bit signed value
+	SCOPE_S32	= 000004,	// A full 32 bit signed value
 	
-	SCOPE_U8	= 00010,	// An 8 bit unsigned value
-	SCOPE_U16	= 00020,	// A 16 bit unsigned value
-	SCOPE_U32	= 00040,	// A full 32 bit unsigned value
+	SCOPE_U8	= 000010,	// An 8 bit unsigned value
+	SCOPE_U16	= 000020,	// A 16 bit unsigned value
+	SCOPE_U32	= 000040,	// A full 32 bit unsigned value
 
-	SCOPE_ADRS	= 00100,	// An address value not associated
+	SCOPE_ADRS	= 000100,	// An address value not associated
 					// with a specific section
-	SCOPE_TEXT	= 01000,	// An address in the TEXT section
-	SCOPE_DATA	= 02000,	// An address in the DATA section
-	SCOPE_BSS	= 04000		// An address in the BSS section
+	SCOPE_TEXT	= 001000,	// An address in the TEXT section
+	SCOPE_DATA	= 002000,	// An address in the DATA section
+	SCOPE_BSS	= 004000,	// An address in the BSS section
+
+	//
+	//	Scope data pertinent to symbols:
+	//
+	SCOPE_IMPORT	= 010000,
+	SCOPE_EXPORT	= 020000,
+
+	//
+	//	Joint scope specifications:
+	//
+	SCOPE_NUMERIC	= SCOPE_S8|SCOPE_S16|SCOPE_S32|SCOPE_U8|SCOPE_U16|SCOPE_U32,
+	SCOPE_ADDRESS	= SCOPE_ADRS|SCOPE_TEXT|SCOPE_DATA|SCOPE_BSS
 } scope;
-#define SCOPE_NUMERIC	(SCOPE_S8|SCOPE_S16|SCOPE_S32|SCOPE_U8|SCOPE_U16|SCOPE_U32)
-#define SCOPE_ADDRESS	(SCOPE_ADRS|SCOPE_TEXT|SCOPE_DATA|SCOPE_BSS)
 
 //
 //	Opcodes are optionally (commonly) size modified.  The
@@ -521,57 +531,6 @@ typedef struct _mnemonic_ {
 			*before,
 			*after;
 } mnemonic;
-
-//
-//	ERROR COLLATING ROUTINES
-//	========================
-//
-
-//
-//	Define the maximum number of errors we will cache.
-//
-#define MAX_WARNING_CACHE	10
-#define MAX_ERROR_CACHE		10
-
-//
-//	The fixed string warning and error cache.
-//
-static char *cached_warning[ MAX_WARNING_CACHE ];
-static char *cached_error[ MAX_ERROR_CACHE ];
-
-//
-//	How many cached to far
-//
-static int warning_cache = 0;
-static int error_cache = 0;
-
-//
-//	routines to log warning and error strings, recover such strings,
-//	and clear the caches.
-//
-
-static void log_warning( char *text ) {
-	if( warning_cache < MAX_WARNING_CACHE ) cached_warning[ warning_cache++ ] = text;
-}
-static void log_error( char *text ) {
-	if( error_cache < MAX_ERROR_CACHE ) cached_error[ error_cache++ ] = text;
-}
-
-static char *warning_text( int idx ) {
-	if(( idx >= 0 )&&( idx < warning_cache )) return( cached_warning[ idx ]);
-	return( NULL );
-}
-static char *error_text( int idx ) {
-	if(( idx >= 0 )&&( idx < error_cache )) return( cached_error[ idx ]);
-	return( NULL );
-}
-
-static void reset_warning_cache( void ) {
-	warning_cache = 0;
-}
-static void reset_error_cache( void ) {
-	error_cache = 0;
-}
 
 
 //
@@ -997,7 +956,7 @@ static void _motorola_set_address( dword adrs ) {
 }
 static void _motorola_set_start( dword adrs ) {
 	if( _motorola_have_start ) {
-		log_error( "Duplicate START address specified" );
+		fprintf( stderr, "Duplicate START address specified\n" );
 	}
 	else {
 		_motorola_have_start = TRUE;
@@ -1199,7 +1158,7 @@ static output_api _intel_output_api = {
 //
 static output_api *output_routine = &_null_output_api;
 
-static bool init_output( char *source ) {
+static char *init_output( char *source ) {
 	char	*suffix;
 
 	suffix = NULL;
@@ -1240,12 +1199,11 @@ static bool init_output( char *source ) {
 		if(( dot = strrchr( fname, PERIOD )) != NULL ) *dot = EOS;
 		strcat( fname, suffix );
 		if(( output_file = fopen( fname, "w" )) == NULL ) {
-			log_error( "Unable to open output file" );
-			return( FALSE );
+			return( "Unable to open output file" );
 		}
 	}
 	FUNC( output_routine->init_output )( source );
-	return( TRUE );
+	return( NULL );
 }
 static void next_line( int line, char *code ) {
 	FUNC( output_routine->next_line )( line, code );
@@ -5154,8 +5112,8 @@ static int parse_arguments( int argc, char **argv ) {
 //
 int main( int argc, char *argv[]) {
 	FILE	*source;
-	int	file;
-	int	err, a;
+	int	file, err, a;
+	char	*msg;
 
 	//
 	//	Start with the arguments
@@ -5217,7 +5175,14 @@ int main( int argc, char *argv[]) {
 		//
 		//	Generate the output data.
 		//
-		if( init_output( argv[ file ])) {
+		if(( msg = init_output( argv[ file ]))) {
+			//
+			//	Failed to initialise output system.
+			//
+			fprintf( stderr, "Pass 3: Initialisation of output format failed: %s.\n", msg );
+			err = 2;
+		}
+		else {
 			rewind( source );
 			
 			PRINT(( "------- CODE GENERATION -------\n" ));
