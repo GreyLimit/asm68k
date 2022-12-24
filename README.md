@@ -12,7 +12,7 @@ At the moment, while ostensibly supporting the concept of sections (code, data a
 
 If no fixed address are provided (via "ORG") then all three sections are floating, and only once code generation is started are fixed addresses applied to each section.  The sections will be ordered traditionally (code, data then BSS), with the output generated starting at address 0.
 
-Assigning an address to the text segment before assembling any code will enable the start address of the text section to be moved and while the remaining sections remain "un-fixed" they will always for the code section in their respective locations.
+Assigning an address to the text segment before assembling any code will enable the start address of the text section to be moved and while the remaining sections remain "un-fixed" they will always follow the code section in their respective locations.
 
 The start address of the code can be set using the "START" directive.
 
