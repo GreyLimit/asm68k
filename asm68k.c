@@ -674,7 +674,7 @@ static void _dump_opcodes( mnemonic *at ) {
 				printf( ".[" );
 				if( op->size & SIZE_B	) printf( "B" );
 				if( op->size & SIZE_W	) printf( "W" );
-				if( op->size & SIZE_L	) printf( "W" );
+				if( op->size & SIZE_L	) printf( "L" );
 				printf( "]" );
 			}
 			printf( "\t" );
